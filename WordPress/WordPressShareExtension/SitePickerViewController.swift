@@ -7,7 +7,7 @@ import WordPressComKit
 /// This class presents a list of Sites, and allows the user to select one from the list. Works
 /// absolutely detached from the Core Data Model, since it was designed for Extension usage.
 ///
-class SitePickerViewController : UITableViewController
+class SitePickerViewController: UITableViewController, UISearchResultsUpdating, UISearchControllerDelegate
 {
     // MARK: - View Lifecycle
     override func viewDidLoad() {
@@ -15,6 +15,8 @@ class SitePickerViewController : UITableViewController
         setupView()
         setupTableView()
         setupNoResultsView()
+        setupSearchController()
+        setupSearchBar()
         loadSites()
     }
 
@@ -25,7 +27,7 @@ class SitePickerViewController : UITableViewController
     }
 
     override func tableView(tableView: UITableView, numberOfRowsInSection section: Int) -> Int {
-        return sites.count
+        return filteredSites.count
     }
 
     override func tableView(tableView: UITableView, heightForRowAtIndexPath indexPath: NSIndexPath) -> CGFloat {
@@ -34,7 +36,7 @@ class SitePickerViewController : UITableViewController
 
     override func tableView(tableView: UITableView, cellForRowAtIndexPath indexPath: NSIndexPath) -> UITableViewCell {
         let cell = tableView.dequeueReusableCellWithIdentifier(reuseIdentifier, forIndexPath: indexPath)
-        let site = sites[indexPath.row]
+        let site = filteredSites[indexPath.row]
 
         configureCell(cell, site: site)
 
@@ -42,7 +44,7 @@ class SitePickerViewController : UITableViewController
     }
 
     override func tableView(tableView: UITableView, didSelectRowAtIndexPath indexPath: NSIndexPath) {
-        let site = sites[indexPath.row]
+        let site = filteredSites[indexPath.row]
         onChange?(siteId: site.ID, description: site.name?.characters.count > 0 ? site.name : site.URL.host)
         navigationController?.popViewControllerAnimated(true)
     }
@@ -72,6 +74,28 @@ class SitePickerViewController : UITableViewController
         tableView.addSubview(noResultsView)
     }
 
+    private func setupSearchController() {
+        let controller = UISearchController(searchResultsController: nil)
+        controller.dimsBackgroundDuringPresentation = false
+        controller.hidesNavigationBarDuringPresentation = false
+        controller.searchResultsUpdater = self
+        controller.delegate = self
+        searchController = controller
+
+        // Fix for Invalid Offset Bug
+        definesPresentationContext = true
+    }
+
+    private func setupSearchBar() {
+        precondition(searchController != nil)
+
+        // Setup the SearchBar: Hidden, by default
+        let searchBar = searchController.searchBar
+        searchBar.searchBarStyle = .Prominent
+        searchBar.hidden = true
+        tableView.tableHeaderView = searchBar
+    }
+
 
     // MARK: - Private Helpers
     private func loadSites() {
@@ -88,9 +112,10 @@ class SitePickerViewController : UITableViewController
 
         service.fetchSites { [weak self] sites, error in
             dispatch_async(dispatch_get_main_queue()) {
-                self?.sites = sites ?? [Site]()
+                self?.unfilteredSites = sites ?? [Site]()
                 self?.tableView.reloadData()
                 self?.showEmptySitesIfNeeded()
+                self?.showSearchBarIfNeeded()
             }
         }
     }
@@ -114,6 +139,21 @@ class SitePickerViewController : UITableViewController
     }
 
 
+    // MARL: - UISearchControllerDelegate
+    func updateSearchResultsForSearchController(searchController: UISearchController) {
+        tableView.reloadData()
+    }
+
+    func willDismissSearchController(searchController: UISearchController) {
+        guard let targetFrame = tableView.tableHeaderView?.frame else {
+            return
+        }
+
+        tableView.scrollRectToVisible(targetFrame, animated: false)
+    }
+
+
+
     // MARK: - No Results Helpers
     private func showLoadingView() {
         noResultsView.titleText = NSLocalizedString("Loading Sites...", comment: "Legend displayed when loading Sites")
@@ -121,23 +161,42 @@ class SitePickerViewController : UITableViewController
     }
 
     private func showEmptySitesIfNeeded() {
-        let hasSites = (sites.isEmpty == false)
+        let hasSites = (unfilteredSites.isEmpty == false)
         noResultsView.titleText = NSLocalizedString("No Sites", comment: "Legend displayed when the user has no sites")
         noResultsView.hidden = hasSites
     }
+
+    private func showSearchBarIfNeeded() {
+        tableView.tableHeaderView?.hidden = unfilteredSites.isEmpty
+    }
+
 
 
     // MARK: Typealiases
     typealias PickerHandler = (siteId: Int, description: String?) -> Void
 
     // MARK: - Public Properties
-    var onChange                : PickerHandler?
+    var onChange : PickerHandler?
+
+    // MARK: - Private Computed Properties
+    private var filteredSites: [Site] {
+        guard let keyword = searchController?.searchBar.text?.lowercaseString where keyword.isEmpty == false else {
+            return unfilteredSites
+        }
+
+        return unfilteredSites.filter { site in
+            let matchesName = site.name?.lowercaseString.containsString(keyword) ?? false
+            let matchesHost = site.URL?.host?.lowercaseString.containsString(keyword) ?? false
+            return matchesName || matchesHost
+        }
+    }
 
     // MARK: - Private Properties
-    private var sites           = [Site]()
-    private var noResultsView   = WPNoResultsView()
+    private var unfilteredSites = [Site]()
+    private var noResultsView = WPNoResultsView()
+    private var searchController: UISearchController!
 
     // MARK: - Private Constants
+    private let rowHeight = CGFloat(74)
     private let reuseIdentifier = "reuseIdentifier"
-    private let rowHeight       = CGFloat(74)
 }
